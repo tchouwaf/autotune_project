@@ -18,34 +18,9 @@ typedef double MY_TYPE;
 
 struct InOutData{
   unsigned int data_size;
+  double buffer_size;
+  double* buffer;
 };
-
-unsigned int* algorithm_one(const char *path){
-  FILE *audio_file = fopen(path, "rb");
-  if (!audio_file) return NULL;
-  
-  fseek(audio_file, 0 ,SEEK_END);
-  long size = ftell(audio_file);
-  fseek(audio_file, 0, SEEK_SET);
-
-  unsigned int nSamples = (unsigned int) size/sizeof(unsigned int);
-
-  unsigned int *buffer = (unsigned int *)malloc(nSamples*sizeof(unsigned int));
-  if (!buffer) {
-    fclose(audio_file);
-    return NULL;
-  }
-
-  size_t readed_blocks = fread(buffer, sizeof(unsigned int), nSamples, audio_file);
-  fclose(audio_file);
-
-  if (readed_blocks != nSamples) {
-        free(buffer);
-        return NULL;
-    }
-
-  return buffer;
-}
 
 
 void usage( void ) {
@@ -93,15 +68,20 @@ int inout( void *outputBuffer, void *inputBuffer, unsigned int /*nBufferFrames*/
     std::cout << "streamTime = " << streamTime << std::endl;
     streamTimePrintTime += streamTimePrintIncrement;
   }
-
  
   // memcpy( outputBuffer, inputBuffer, *bytes );
   MY_TYPE* outputB = (MY_TYPE*) outputBuffer;
   MY_TYPE* inputB = (MY_TYPE*) inputBuffer;
 
   InOutData* my_data = (InOutData*) data;
+  double n_samples = my_data->buffer_size;
+
   unsigned int bytes = my_data->data_size;
   unsigned int len = bytes/sizeof(MY_TYPE);
+
+  // for(unsigned int i=0; i<len; i++){
+  //   if index >= n_samples;
+  // }
 
   for(unsigned int i=0; i< len; i++){
     outputB[i] = inputB[i];
@@ -167,12 +147,36 @@ int main( int argc, char *argv[] )
   InOutData data;
   data.data_size = bufferBytes;
 
+  ////// Reading our audio files ///////
+
   const char* relative_path = "/net/etudiant/home/tchouwaf/Documents/BE_tstr_2025_v1/BE_tstr_2025_v1/rtaudio-6.0.1/tests/F01_a3_s100_v04.bin";
-  unsigned int *buffer = algorithm_one(relative_path);
+  FILE *audio_file = fopen(relative_path, "rb");
+
+  fseek(audio_file, 0 ,SEEK_END);
+  long size = ftell(audio_file);
+  fseek(audio_file, 0, SEEK_SET);
+
+  double nSamples = (double) size/sizeof(double);
+
+  double *buffer = (double *)malloc(nSamples*sizeof(double));
+  if (!buffer) {
+    fclose(audio_file);
+  }
+
+  size_t readed_blocks = fread(buffer, sizeof(double), nSamples, audio_file);
+  fclose(audio_file);
+
+  if (readed_blocks != nSamples) {
+        free(buffer);
+    }
 
   if ( adac.openStream( &oParams, &iParams, FORMAT, fs, &bufferFrames, &inout, (void *)&data, &options ) ) {
     goto cleanup;
   }
+
+  data.buffer_size = nSamples;
+  data.buffer = buffer;
+
 
   if ( adac.isStreamOpen() == false ) goto cleanup;
 

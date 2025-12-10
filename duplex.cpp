@@ -18,8 +18,9 @@ typedef double MY_TYPE;
 #define FORMAT RTAUDIO_FLOAT64
 
 struct InOutData{
+  size_t buffer_size;
+
   unsigned int data_size;
-  double buffer_size;
   double* buffer;
   size_t index;
 
@@ -28,6 +29,9 @@ struct InOutData{
   
   double* dump_output;
   size_t dumpOutput_idx;
+
+  double* acf_input_dump;
+  size_t dumpACF_idx;
 
   size_t dump_size;
 };
@@ -51,7 +55,7 @@ int write_buff_dump(double* buff, const int n_buff, double* buff_dump, const int
 }
 
 double* acf(double* signal, int signal_size){
-  int acf_size = 2*signal_size-1;
+  int acf_size = signal_size;
   double* acf_function = (double*)calloc(acf_size, sizeof(double));
 
   for(int i=0; i<acf_size; i++){
@@ -63,14 +67,14 @@ double* acf(double* signal, int signal_size){
 }
 
 double get_max(double* acf_function, int acf_size){
-  double max_1 = acf_function[0];
-  int idx_max_1 = 0;
+  double max_1 = -1e30;
+  int idx_max_1 = -1;
 
-  double max_2 = acf_function[1];
-  int idx_max_2 = 1;
+  double max_2 = -1e30;
+  int idx_max_2 = -1;
 
   for(int i=1; i<acf_size-1; i++){
-    if ((acf_function[i]-acf_function[i-1]>0) && (acf_function[i+1]-acf_function[i])<0){
+    if ((acf_function[i]-acf_function[i-1]>0) && (acf_function[i+1]-acf_function[i]<0)){
 
       if((acf_function[i]>=max_2) && (acf_function[i]>=max_1)){
         max_2 = max_1;
@@ -88,10 +92,11 @@ double get_max(double* acf_function, int acf_size){
 
   int T_0 = std::abs(idx_max_2-idx_max_1);
   if(T_0 == 0){
+    std::cout<<"T_0 is null\n";
     return 0;
   }
 
-  return 1/T_0; //Multiply it by the sampling frequency
+  return 1/(double)T_0; //Multiply it by the sampling frequency
 }
 
 void usage( void ) {
@@ -145,10 +150,7 @@ int inout( void *outputBuffer, void *inputBuffer, unsigned int /*nBufferFrames*/
   double* inputB = (double*) inputBuffer;
 
   InOutData* my_data = (InOutData*) data;
-  double n_samples = my_data->buffer_size;
-
-  unsigned int bytes = my_data->data_size;
-  unsigned int len = bytes/sizeof(double);
+  unsigned int len = my_data->buffer_size;
 
   // if(my_data->dumpInput_idx < my_data->dump_size){
   //   my_data->dump_input[my_data->dumpInput_idx++] = inputB[0];
@@ -157,23 +159,44 @@ int inout( void *outputBuffer, void *inputBuffer, unsigned int /*nBufferFrames*/
   // if(my_data->dumpOutput_idx < my_data->dump_size){
   //   my_data->dump_output[my_data->dumpOutput_idx++] = outputB[0];
   // }
-
   for(unsigned int i=0; i<len; i++){
-    if(my_data->index >= n_samples){
+    outputB[i] = my_data->buffer[my_data->index++];
+    my_data->acf_input_dump[my_data->dumpACF_idx++] = inputB[i];
+
+    if (data->ac_write_idx >= data->ac_win_size) {
+        data->ac_write_idx = 0;
+    }
+    
+    if (my_data->index >= my_data->data_size){
       my_data->index = 0;
     }
-    inputB[i] = my_data->buffer[my_data->index++];
   }
-  
-  for(unsigned int i=0; i< len; i++){
-    outputB[i] = inputB[i];
-  }
+
+  double* acf_input = acf(my_data->buffer, my_data->buffer_size);
+  double f_zero_input = get_max(acf_input, my_data->buffer_size)*44100;
+  free(acf_input);
+
+  std::cout<<"f0 :"<< f_zero_input << "\n";
+
+  // for(unsigned int i=0; i< len; i++){
+  //   outputB[i] = inputB[i];
+  // }
+
+  // int dump__input_size = (int)(my_data->dumpInput_idx);
+  // int the_size_input = write_buff_dump(inputB, my_data->buffer_size, my_data->dump_input, my_data->dump_size, &dump__input_size);
+  // int dump__output_size = (int)(my_data->dumpOutput_idx);
+  // int the_size_output = write_buff_dump(outputB, my_data->buffer_size, my_data->dump_output, my_data->dump_size, &dump__output_size);
 
   int dump__input_size = (int)(my_data->dumpInput_idx);
-  int the_size_input = write_buff_dump(inputB, my_data->buffer_size, my_data->dump_input, my_data->dump_size, &dump__input_size);
+  dump__input_size += write_buff_dump(inputB, my_data->buffer_size, my_data->dump_input, my_data->dump_size, &dump__input_size);
+  my_data->dumpInput_idx = dump__input_size;
+
+
 
   int dump__output_size = (int)(my_data->dumpOutput_idx);
-  int the_size_output = write_buff_dump(outputB, my_data->buffer_size, my_data->dump_output, my_data->dump_size, &dump__output_size);
+  dump__output_size += write_buff_dump(outputB, my_data->buffer_size, my_data->dump_output, my_data->dump_size, &dump__output_size);
+  my_data->dumpOutput_idx = dump__output_size;
+
 
   return 0;
 }
@@ -204,6 +227,8 @@ int main( int argc, char *argv[] )
   if ( argc > 6 )
     oOffset = (unsigned int) atoi(argv[6]);
 
+  
+
   // Let RtAudio print messages to stderr.
   adac.showWarnings( true );
 
@@ -215,6 +240,7 @@ int main( int argc, char *argv[] )
   oParams.nChannels = channels;
   oParams.firstChannel = oOffset;
   
+
   if ( iDevice == 0 )
     iParams.deviceId = adac.getDefaultInputDevice();
   else {
@@ -234,9 +260,7 @@ int main( int argc, char *argv[] )
   //options.flags |= RTAUDIO_NONINTERLEAVED;
 
   bufferBytes = bufferFrames * channels * sizeof( MY_TYPE );
-  InOutData data;
-  data.data_size = bufferBytes;
-
+  InOutData* data = new InOutData();
 
   ////// Reading our audio files ///////
 
@@ -247,17 +271,20 @@ int main( int argc, char *argv[] )
     perror("Error opening file");
     return 1;
   }
+  
 
   fseek(audio_file, 0 ,SEEK_END);
   long size = ftell(audio_file);
   fseek(audio_file, 0, SEEK_SET);
   
   double nSamples = (double) size/sizeof(double);
+  data->data_size = nSamples;
 
   double *buffer = (double *)malloc(nSamples*sizeof(double));
   if (!buffer) {
     fclose(audio_file);
   }
+
   
   size_t readed_blocks = fread(buffer, sizeof(double), nSamples, audio_file);
   fclose(audio_file);
@@ -266,20 +293,25 @@ int main( int argc, char *argv[] )
         free(buffer);
     }
 
-  if ( adac.openStream( &oParams, &iParams, FORMAT, fs, &bufferFrames, &inout, (void *)&data, &options ) ) {
+  if ( adac.openStream( &oParams, &iParams, FORMAT, fs, &bufferFrames, &inout, (void *)data, &options ) ) {
     goto cleanup;
   }
 
-  data.dump_input = (double *)calloc(nSamples, sizeof(double));
-  data.dumpInput_idx = 0;
+  
 
-  data.dump_output = (double *)calloc(nSamples, sizeof(double));
-  data.dumpOutput_idx = 0;
+  data->dump_input = (double *)calloc(nSamples, sizeof(double));
+  data->dumpInput_idx = 0;
 
-  data.dump_size = nSamples;
+  data->dump_output = (double *)calloc(nSamples, sizeof(double));
+  data->dumpOutput_idx = 0;
 
-  data.buffer_size = nSamples;
-  data.buffer = buffer;
+  data->acf_input_dump = (double *)calloc(nSamples, sizeof(double));
+  data->dumpACF_idx = 0;
+
+  data->dump_size = nSamples;
+
+  data->buffer_size = bufferFrames * channels ;
+  data->buffer = buffer;
 
 
   if ( adac.isStreamOpen() == false ) goto cleanup;
@@ -302,17 +334,23 @@ int main( int argc, char *argv[] )
 
   const char* write_input_path = "/net/etudiant/home/tchouwaf/Documents/BE_tstr_2025_v1/BE_tstr_2025_v1/audio_files/write_input.bin";
   FILE *audio_input_writed = fopen(write_input_path, "wb");
-  size_t written_input = fwrite(data.dump_input, sizeof(double), data.dumpInput_idx, audio_input_writed);
+  size_t written_input = fwrite(data->dump_input, sizeof(double), data->dumpInput_idx, audio_input_writed);
+  std::cout<<"Number of input blocks wrote : "<< written_input <<"\n";
   fclose(audio_input_writed);
 
-  free(data.dump_input);
+  free(data->dump_input);
 
   const char* write_output_path = "/net/etudiant/home/tchouwaf/Documents/BE_tstr_2025_v1/BE_tstr_2025_v1/audio_files/write_output.bin";
   FILE *audio_ouput_writed = fopen(write_output_path, "wb");
-  size_t written_output = fwrite(data.dump_output, sizeof(double), data.dumpOutput_idx, audio_ouput_writed);
+  size_t written_output = fwrite(data->dump_output, sizeof(double), data->dumpOutput_idx, audio_ouput_writed);
+  std::cout<<"Number of ouput blocks wrote : "<< written_output <<"\n";
   fclose(audio_ouput_writed);
 
-  free(data.dump_output);
+  free(data->dump_output);
+
+  std::cout << "\nEnd!\n";
 
   return 0;
 }
+
+
